@@ -186,7 +186,7 @@ class KNXIPInterface():
                 except KeyError:
                     self.xknx.logger.debug("Could not find IPv4 address on interface %s", interface)
                     continue
-            return None
+            raise RuntimeError("Cannot find a local IP address")
 
         def _find_default_gateway() -> ipaddress.IPv4Address:
             """Return IP address of default gateway."""

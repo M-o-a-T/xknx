@@ -6,10 +6,9 @@ import pytest
 from xknx import XKNX
 from xknx.core import ValueReader
 from xknx.dpt import DPTBinary
-from xknx.telegram import (
-    GroupAddress, Telegram, TelegramDirection, TelegramType)
+from xknx.telegram import GroupAddress, Telegram, TelegramType
 
-from xknx._test import Testcase
+from xknx._test import Testcase, xknx_running
 
 class TestValueReader(Testcase):
     """Test class for value reader."""
@@ -17,19 +16,16 @@ class TestValueReader(Testcase):
     @pytest.mark.anyio
     async def test_value_reader_read_success(self):
         """Test value reader: successfull read."""
-        xknx = XKNX()
-        test_group_address = GroupAddress("0/0/0")
-        response_telegram = Telegram(group_address=test_group_address,
-                                     telegramtype=TelegramType.GROUP_RESPONSE,
-                                     direction=TelegramDirection.INCOMING,
-                                     payload=DPTBinary(1))
+        async with xknx_running() as xknx:
+            test_group_address = GroupAddress("0/0/0")
+            response_telegram = Telegram(group_address=test_group_address,
+                                         telegramtype=TelegramType.GROUP_RESPONSE,
+                                         payload=DPTBinary(1))
 
-        value_reader = ValueReader(xknx, test_group_address)
+            value_reader = ValueReader(xknx, test_group_address)
 
-        # Create a task for read()
-        result = None
-        async with anyio.create_task_group() as tg:
-            xknx.task_group = tg
+            # Create a task for read()
+            result = None
             await xknx.telegrams_in.start()
 
             async def _reader():
@@ -38,16 +34,13 @@ class TestValueReader(Testcase):
             read_task = await xknx.spawn(_reader)
 
             # queue the response
-            await xknx.telegrams.put(response_telegram)
+            await xknx.telegrams_in.put(response_telegram)
             await xknx.telegrams_in.stop()
 
         # GroupValueRead telegram is still in the queue because we are not actually processing it
         self.assertEqual(xknx.telegrams_out.qsize(), 1)
         # Callback was removed again
         assert not xknx.telegrams_in.callbacks
-        # Telegram was received
-        self.assertEqual(value_reader.received_telegram,
-                        response_telegram)
         # Successfull read() returns the telegram
         self.assertEqual(result,
                         response_telegram)
@@ -68,8 +61,6 @@ class TestValueReader(Testcase):
             "Error: KNX bus did not respond in time to GroupValueRead request for: %s", GroupAddress('0/0/0'))
         # Callback was removed again
         assert not xknx.telegrams_in.callbacks
-        # No telegram was received
-        self.assertIsNone(value_reader.received_telegram)
         # Unsuccessfull read() returns None
         self.assertIsNone(timed_out_read)
 
@@ -93,19 +84,15 @@ class TestValueReader(Testcase):
         test_group_address = GroupAddress("0/0/0")
         expected_telegram_1 = Telegram(group_address=test_group_address,
                                        telegramtype=TelegramType.GROUP_RESPONSE,
-                                       direction=TelegramDirection.INCOMING,
                                        payload=DPTBinary(1))
         expected_telegram_2 = Telegram(group_address=test_group_address,
                                        telegramtype=TelegramType.GROUP_WRITE,
-                                       direction=TelegramDirection.INCOMING,
                                        payload=DPTBinary(1))
         telegram_wrong_address = Telegram(group_address=GroupAddress("0/0/1"),
                                           telegramtype=TelegramType.GROUP_RESPONSE,
-                                          direction=TelegramDirection.INCOMING,
                                           payload=DPTBinary(1))
         telegram_wrong_type = Telegram(group_address=test_group_address,
                                        telegramtype=TelegramType.GROUP_READ,
-                                       direction=TelegramDirection.INCOMING,
                                        payload=DPTBinary(1))
 
         value_reader = ValueReader(xknx, test_group_address)
@@ -115,10 +102,33 @@ class TestValueReader(Testcase):
 
         self.assertFalse(await async_telegram_received(telegram_wrong_address))
         self.assertFalse(await async_telegram_received(telegram_wrong_type))
-        self.assertIsNone(value_reader.received_telegram)
 
         self.assertTrue(await async_telegram_received(expected_telegram_1))
-        self.assertEqual(value_reader.received_telegram, expected_telegram_1)
 
         self.assertTrue(await async_telegram_received(expected_telegram_2))
-        self.assertEqual(value_reader.received_telegram, expected_telegram_2)
+
+    @pytest.mark.anyio
+    async def test_value_reader_loop(self):
+        """Test value reader: telegram_received."""
+        async with xknx_running() as xknx:
+            test_group_address = GroupAddress("0/0/0")
+            value_reader = ValueReader(xknx, test_group_address)
+            expected_telegram = Telegram(group_address=test_group_address,
+                                         telegramtype=TelegramType.GROUP_WRITE,
+                                         payload=DPTBinary(1))
+            telegram_wrong_address = Telegram(group_address=GroupAddress("0/0/1"),
+                                              telegramtype=TelegramType.GROUP_WRITE,
+                                              payload=DPTBinary(1))
+            evt = anyio.create_event()
+            async def reader():
+                await xknx.telegrams_in.start()
+                res = await value_reader.read()
+                assert res == expected_telegram
+                await evt.set()
+
+            await xknx.spawn(reader)
+            await anyio.sleep(0.1)  # reader starting up
+            await xknx.telegrams_in.put(telegram_wrong_address)
+            await xknx.telegrams_in.put(expected_telegram)
+            async with anyio.fail_after(999):
+                await evt.wait()

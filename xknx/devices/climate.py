@@ -168,7 +168,7 @@ class Climate(Device):
         if "mode" in config:
             climate_mode = ClimateMode.from_config(
                 xknx=xknx,
-                name=None,
+                name=name+'._mode',
                 config=config['mode'])
 
         return cls(xknx,
@@ -329,3 +329,15 @@ class Climate(Device):
     def __eq__(self, other):
         """Equal operator."""
         return self.__dict__ == other.__dict__
+
+    def add_to_xknx(self):
+        """Add myself to xknx's device list."""
+        super().add_to_xknx()
+        if self.mode is not None:
+            self.mode.add_to_xknx()
+
+    def remove_from_xknx(self):
+        """Remove myself from xknx's device list."""
+        if self.mode is not None:
+            self.mode.remove_from_xknx()
+        super().remove_from_xknx()

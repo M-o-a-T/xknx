@@ -1,6 +1,7 @@
 """Unit test for Switch objects."""
 from unittest.mock import Mock, patch
 import pytest
+import anyio
 
 from xknx import XKNX
 from xknx.devices import Device
@@ -8,7 +9,7 @@ from xknx.dpt import DPTArray
 from xknx.exceptions import XKNXException
 from xknx.telegram import GroupAddress, Telegram, TelegramType
 
-from xknx._test import Testcase, AsyncMock
+from xknx._test import Testcase, AsyncMock, xknx_running
 
 class TestDevice(Testcase):
     """Test class for Switch object."""
@@ -26,19 +27,11 @@ class TestDevice(Testcase):
         xknx = XKNX()
         device = Device(xknx, 'TestDevice')
 
-        after_update_callback1 = Mock()
-        after_update_callback2 = Mock()
+        after_update_callback1 = AsyncMock()
+        after_update_callback2 = AsyncMock()
 
-        async def async_after_update_callback1(device):
-            """Async callback No. 1."""
-            after_update_callback1(device)
-
-        async def async_after_update_callback2(device):
-            """Async callback No. 2."""
-            after_update_callback2(device)
-
-        device.register_device_updated_cb(async_after_update_callback1)
-        device.register_device_updated_cb(async_after_update_callback2)
+        device.register_device_updated_cb(after_update_callback1)
+        device.register_device_updated_cb(after_update_callback2)
 
         # Triggering first time. Both have to be called
         await device.after_update()
@@ -55,7 +48,7 @@ class TestDevice(Testcase):
         after_update_callback2.reset_mock()
 
         # Unregistering first callback
-        device.unregister_device_updated_cb(async_after_update_callback1)
+        device.unregister_device_updated_cb(after_update_callback1)
         await device.after_update()
         after_update_callback1.assert_not_called()
         after_update_callback2.assert_called_with(device)
@@ -63,10 +56,32 @@ class TestDevice(Testcase):
         after_update_callback2.reset_mock()
 
         # Unregistering second callback
-        device.unregister_device_updated_cb(async_after_update_callback2)
+        device.unregister_device_updated_cb(after_update_callback2)
         await device.after_update()
         after_update_callback1.assert_not_called()
         after_update_callback2.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_process_run(self):
+        """Test process / reading telegrams from telegram queue. Test if callback was called."""
+
+        called = 0
+        async with xknx_running() as xknx:
+            device = Device(xknx, 'TestDevice')
+            async def tester():
+                nonlocal called
+                async for _ in device:
+                    called += 1
+
+            async with device.run():
+                await xknx.spawn(tester)
+
+                await device.after_update()
+                await anyio.sleep(0.1)
+                await device.after_update()
+                await anyio.sleep(0.1)
+
+        assert called == 2
 
     @pytest.mark.anyio
     async def test_process(self):

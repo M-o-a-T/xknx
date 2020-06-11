@@ -7,7 +7,6 @@ import anyio
 
 from xknx.exceptions import XKNXException
 from xknx.knxip import KNXIPFrame, KNXIPServiceType, TunnellingRequest
-from xknx.telegram import TelegramDirection
 
 from .connect import Connect
 from .connectionstate import ConnectionState
@@ -21,7 +20,7 @@ class Tunnel():
 
     # pylint: disable=too-many-instance-attributes,too-many-public-methods
 
-    def __init__(self, xknx, src_address, local_ip="0.0.0.0", gateway_ip=None, gateway_port=None,
+    def __init__(self, xknx, src_address, local_ip="", gateway_ip=None, gateway_port=None,
                  telegram_received_callback=None, auto_reconnect=False,
                  auto_reconnect_wait=3):
         """Initialize Tunnel class."""
@@ -64,7 +63,6 @@ class Tunnel():
         else:
             await self.send_ack(knxipframe.body.communication_channel_id, knxipframe.body.sequence_counter)
             telegram = knxipframe.body.cemi.telegram
-            telegram.direction = TelegramDirection.INCOMING
             if self.telegram_received_callback is not None:
                 await self.telegram_received_callback(telegram)
 
